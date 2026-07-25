@@ -37,6 +37,12 @@ async def init_db():
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP NOT NULL DEFAULT NOW()
             );
+
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id BIGINT PRIMARY KEY,
+                added_by BIGINT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
             """
         )
 
@@ -53,7 +59,6 @@ async def create_user_if_not_exists(user_id: int, username: str, full_name: str,
         existing = await conn.fetchrow("SELECT user_id FROM users WHERE user_id = $1", user_id)
         if existing:
             return False
-        # o'zini-o'zi referal qilishning oldini olamiz
         if ref_id == user_id:
             ref_id = None
         await conn.execute(
@@ -67,15 +72,13 @@ async def create_user_if_not_exists(user_id: int, username: str, full_name: str,
 
 
 async def mark_verified_and_reward(user_id: int, referral_bonus: float):
-    """Foydalanuvchi majburiy obunadan birinchi marta o'tganda chaqiriladi:
-    verified=True qilinadi va agar referal orqali kelgan bo'lsa, taklif qilgan odamga bonus beriladi."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             user = await conn.fetchrow(
                 "SELECT verified, ref_id FROM users WHERE user_id = $1", user_id
             )
             if not user or user["verified"]:
-                return None  # allaqachon tasdiqlangan yoki topilmadi
+                return None
 
             await conn.execute("UPDATE users SET verified = TRUE WHERE user_id = $1", user_id)
 
@@ -151,6 +154,32 @@ async def get_withdrawal(withdrawal_id: int):
 async def set_withdrawal_status(withdrawal_id: int, status: str):
     async with pool.acquire() as conn:
         await conn.execute("UPDATE withdrawals SET status = $1 WHERE id = $2", status, withdrawal_id)
+
+
+# ---------- ADMINLAR (dinamik, super adminlar tomonidan tayinlanadi) ----------
+
+async def is_db_admin(user_id: int) -> bool:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT user_id FROM admins WHERE user_id = $1", user_id)
+        return row is not None
+
+
+async def add_admin(user_id: int, added_by: int):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO admins (user_id, added_by) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
+            user_id, added_by,
+        )
+
+
+async def remove_admin(user_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM admins WHERE user_id = $1", user_id)
+
+
+async def list_admins():
+    async with pool.acquire() as conn:
+        return await conn.fetch("SELECT * FROM admins ORDER BY created_at")
 
 
 # ---------- STATISTIKA ----------
