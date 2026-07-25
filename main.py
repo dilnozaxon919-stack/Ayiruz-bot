@@ -31,10 +31,22 @@ class AdminAddChannel(StatesGroup):
     waiting_channel = State()
 
 
+class AdminAddAdmin(StatesGroup):
+    waiting_user_id = State()
+
+
 # ---------------- Yordamchi funksiyalar ----------------
 
-def is_admin(user_id: int) -> bool:
+def is_super_admin(user_id: int) -> bool:
+    """Faqat .env / Render Environment Variables orqali belgilangan bosh adminlar."""
     return user_id in config.ADMIN_IDS
+
+
+async def is_admin(user_id: int) -> bool:
+    """Super admin yoki bosh admin tomonidan tayinlangan oddiy admin."""
+    if is_super_admin(user_id):
+        return True
+    return await db.is_db_admin(user_id)
 
 
 async def get_not_joined_channels(bot: Bot, user_id: int):
@@ -95,7 +107,7 @@ async def cmd_start(message: Message):
         f"— Har bir taklif qilingan do'stingiz uchun: {config.REFERRAL_BONUS} UC\n"
         f"— Eng kam chiqarib olish miqdori: {config.MIN_WITHDRAW} UC\n\n"
         "Quyidagi menyudan foydalaning 👇",
-        reply_markup=kb.main_menu(is_admin(user_id)),
+        reply_markup=kb.main_menu(await is_admin(user_id)),
     )
 
 
@@ -121,7 +133,7 @@ async def cb_check_sub(call: CallbackQuery):
 
     await call.message.answer(
         "✅ Rahmat! Endi botdan to'liq foydalanishingiz mumkin.",
-        reply_markup=kb.main_menu(is_admin(user_id)),
+        reply_markup=kb.main_menu(await is_admin(user_id)),
     )
     await call.answer()
 
@@ -259,7 +271,7 @@ async def withdraw_pubg_id(message: Message, state: FSMContext):
 
     await message.answer(
         "⏳ So'rovingiz qabul qilindi va jarayonda. Tez orada UC hisobingizga (PUBG ID) o'tkaziladi.",
-        reply_markup=kb.main_menu(is_admin(user_id)),
+        reply_markup=kb.main_menu(await is_admin(user_id)),
     )
 
     username = f"@{message.from_user.username}" if message.from_user.username else "—"
@@ -281,7 +293,7 @@ async def withdraw_pubg_id(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("wd_approve:"))
 async def wd_approve(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         await call.answer("Sizga ruxsat yo'q.", show_alert=True)
         return
     withdrawal_id = int(call.data.split(":")[1])
@@ -304,7 +316,7 @@ async def wd_approve(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("wd_reject:"))
 async def wd_reject(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         await call.answer("Sizga ruxsat yo'q.", show_alert=True)
         return
     withdrawal_id = int(call.data.split(":")[1])
@@ -330,22 +342,28 @@ async def wd_reject(call: CallbackQuery):
 
 @router.message(F.text == "⚙️ Admin")
 async def menu_admin(message: Message):
-    if not is_admin(message.from_user.id):
+    if not await is_admin(message.from_user.id):
         return
-    await message.answer("⚙️ <b>Admin panel</b>", parse_mode="HTML", reply_markup=kb.admin_menu())
+    await message.answer(
+        "⚙️ <b>Admin panel</b>", parse_mode="HTML",
+        reply_markup=kb.admin_menu(is_super_admin(message.from_user.id)),
+    )
 
 
 @router.callback_query(F.data == "admin_back")
 async def admin_back(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
-    await call.message.edit_text("⚙️ <b>Admin panel</b>", parse_mode="HTML", reply_markup=kb.admin_menu())
+    await call.message.edit_text(
+        "⚙️ <b>Admin panel</b>", parse_mode="HTML",
+        reply_markup=kb.admin_menu(is_super_admin(call.from_user.id)),
+    )
     await call.answer()
 
 
 @router.callback_query(F.data == "admin_add_channel")
 async def admin_add_channel(call: CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     await call.message.answer(
         "➕ Majburiy obuna qilinadigan kanalni yuboring.\n\n"
@@ -373,17 +391,21 @@ async def admin_add_channel_save(message: Message, state: FSMContext):
 
     await db.add_channel(chat_id, title)
     await state.clear()
-    await message.answer(f"✅ Kanal qo'shildi: {title}", reply_markup=kb.admin_menu())
+    await message.answer(
+        f"✅ Kanal qo'shildi: {title}",
+        reply_markup=kb.admin_menu(is_super_admin(message.from_user.id)),
+    )
 
 
 @router.callback_query(F.data == "admin_list_channels")
 async def admin_list_channels(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     channels = await db.list_channels()
     if not channels:
         await call.message.edit_text(
-            "📋 Hozircha majburiy kanallar yo'q.", reply_markup=kb.admin_menu()
+            "📋 Hozircha majburiy kanallar yo'q.",
+            reply_markup=kb.admin_menu(is_super_admin(call.from_user.id)),
         )
         await call.answer()
         return
@@ -396,13 +418,16 @@ async def admin_list_channels(call: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin_remove_channel:"))
 async def admin_remove_channel(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     channel_id = int(call.data.split(":")[1])
     await db.remove_channel(channel_id)
     channels = await db.list_channels()
     if not channels:
-        await call.message.edit_text("📋 Hozircha majburiy kanallar yo'q.", reply_markup=kb.admin_menu())
+        await call.message.edit_text(
+            "📋 Hozircha majburiy kanallar yo'q.",
+            reply_markup=kb.admin_menu(is_super_admin(call.from_user.id)),
+        )
     else:
         await call.message.edit_text(
             "📋 Majburiy kanallar ro'yxati (o'chirish uchun bosing):",
@@ -413,7 +438,7 @@ async def admin_remove_channel(call: CallbackQuery):
 
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
+    if not await is_admin(call.from_user.id):
         return
     stats = await db.get_stats()
     await call.message.answer(
@@ -424,6 +449,90 @@ async def admin_stats(call: CallbackQuery):
         parse_mode="HTML",
     )
     await call.answer()
+
+
+@router.callback_query(F.data == "admin_add_admin")
+async def admin_add_admin(call: CallbackQuery, state: FSMContext):
+    if not is_super_admin(call.from_user.id):
+        await call.answer("Bu faqat bosh adminlarga ruxsat etilgan.", show_alert=True)
+        return
+    await call.message.answer(
+        "👑 Admin qilib tayinlamoqchi bo'lgan foydalanuvchining Telegram ID raqamini yuboring.\n"
+        "(ID'ni bilish uchun @userinfobot'dan foydalanish mumkin)"
+    )
+    await state.set_state(AdminAddAdmin.waiting_user_id)
+    await call.answer()
+
+
+@router.message(AdminAddAdmin.waiting_user_id)
+async def admin_add_admin_save(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text.isdigit():
+        await message.answer("❌ Faqat raqamlardan iborat Telegram ID yuboring. Qaytadan urinib ko'ring:")
+        return
+
+    new_admin_id = int(text)
+    if is_super_admin(new_admin_id):
+        await message.answer("Bu foydalanuvchi allaqachon bosh admin.")
+        await state.clear()
+        return
+
+    await db.add_admin(new_admin_id, added_by=message.from_user.id)
+    await state.clear()
+    await message.answer(
+        f"✅ <code>{new_admin_id}</code> endi admin.",
+        parse_mode="HTML",
+        reply_markup=kb.admin_menu(is_super_admin(message.from_user.id)),
+    )
+    try:
+        await message.bot.send_message(new_admin_id, "👑 Sizga botda admin huquqi berildi!")
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(F.data == "admin_list_admins")
+async def admin_list_admins(call: CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        await call.answer("Bu faqat bosh adminlarga ruxsat etilgan.", show_alert=True)
+        return
+    admins = await db.list_admins()
+    if not admins:
+        await call.message.edit_text(
+            "🗑 Hozircha tayinlangan qo'shimcha adminlar yo'q.",
+            reply_markup=kb.admin_menu(True),
+        )
+        await call.answer()
+        return
+    await call.message.edit_text(
+        "🗑 Tayinlangan adminlar ro'yxati (o'chirish uchun bosing):",
+        reply_markup=kb.admins_remove_keyboard(admins),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("admin_remove_admin:"))
+async def admin_remove_admin(call: CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        await call.answer("Bu faqat bosh adminlarga ruxsat etilgan.", show_alert=True)
+        return
+    target_id = int(call.data.split(":")[1])
+    await db.remove_admin(target_id)
+    admins = await db.list_admins()
+    if not admins:
+        await call.message.edit_text(
+            "🗑 Hozircha tayinlangan qo'shimcha adminlar yo'q.",
+            reply_markup=kb.admin_menu(True),
+        )
+    else:
+        await call.message.edit_text(
+            "🗑 Tayinlangan adminlar ro'yxati (o'chirish uchun bosing):",
+            reply_markup=kb.admins_remove_keyboard(admins),
+        )
+    try:
+        await call.bot.send_message(target_id, "❌ Sizning admin huquqingiz bekor qilindi.")
+    except TelegramBadRequest:
+        pass
+    await call.answer("O'chirildi ✅")
 
 
 # ---------------- Render uchun oddiy web server (UptimeRobot shu yerga ping yuboradi) ----------------
