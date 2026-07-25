@@ -29,12 +29,28 @@ def subscribe_keyboard(channels) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def admin_menu() -> InlineKeyboardMarkup:
+def admin_menu(is_super_admin: bool = False) -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text="➕ Majburiy kanal qo'shish", callback_data="admin_add_channel")],
         [InlineKeyboardButton(text="📋 Kanallar ro'yxati / o'chirish", callback_data="admin_list_channels")],
         [InlineKeyboardButton(text="📊 Statistika", callback_data="admin_stats")],
     ]
+    if is_super_admin:
+        buttons.append([InlineKeyboardButton(text="👑 Admin tayinlash", callback_data="admin_add_admin")])
+        buttons.append([InlineKeyboardButton(text="🗑 Adminlar ro'yxati / o'chirish", callback_data="admin_list_admins")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admins_remove_keyboard(admins) -> InlineKeyboardMarkup:
+    buttons = []
+    for a in admins:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"❌ {a['user_id']}",
+                callback_data=f"admin_remove_admin:{a['user_id']}",
+            )
+        ])
+    buttons.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="admin_back")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
